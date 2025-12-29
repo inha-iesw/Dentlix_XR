@@ -79,4 +79,5 @@ dependencies {
     implementation("androidx.xr.runtime:runtime:1.0.0-alpha10")
     implementation("androidx.xr.scenecore:scenecore:1.0.0-alpha10")
     implementation("androidx.xr.compose.material3:material3:1.0.0-alpha10")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

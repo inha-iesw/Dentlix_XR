@@ -9,6 +9,7 @@ import android.opengl.EGLSurface
 import android.opengl.GLES30
 import android.util.Log
 import android.view.Surface
+import android.os.SystemClock
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -24,7 +25,7 @@ class XrOverlayRenderer {
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
 
     private var program = 0
-    private var vbo = 0
+    private var vao = 0
     private var cameraTex = 0
     private var maskTex = 0
 
@@ -40,6 +41,22 @@ class XrOverlayRenderer {
     private var maskWidth = 0
     private var maskHeight = 0
     private var maskDirty = false
+    private var lastCameraLogMs = 0L
+    private var lastMaskLogMs = 0L
+    @Volatile
+    private var debugMode = DebugMode.COMPOSITE
+
+    enum class DebugMode(val id: Int) {
+        COMPOSITE(0),
+        CAMERA_ONLY(1),
+        MASK_ONLY(2),
+        SOLID_COLOR(3),
+        UV_GRADIENT(4)
+    }
+
+    fun setDebugMode(mode: DebugMode) {
+        debugMode = mode
+    }
 
     fun start(surface: Surface) {
         if (running) return
@@ -75,6 +92,15 @@ class XrOverlayRenderer {
         buffer.order(ByteOrder.nativeOrder())
         bitmap.copyPixelsToBuffer(buffer)
         buffer.rewind()
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCameraLogMs > 1000) {
+            val p0 = buffer.get(0).toInt() and 0xFF
+            val p1 = buffer.get(1).toInt() and 0xFF
+            val p2 = buffer.get(2).toInt() and 0xFF
+            val p3 = buffer.get(3).toInt() and 0xFF
+            Log.d("XR_LAB", "Camera frame: ${width}x${height} p0=[$p0,$p1,$p2,$p3]")
+            lastCameraLogMs = now
+        }
         synchronized(lock) {
             cameraBuffer = buffer
             cameraWidth = width
@@ -90,6 +116,12 @@ class XrOverlayRenderer {
         if (total > 0) {
             val ratio = ones.toFloat() / total.toFloat()
             Log.d("XR_LAB", "Mask stats: ones=$ones total=$total ratio=$ratio")
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastMaskLogMs > 1000 && bytes.isNotEmpty()) {
+            val first = bytes[0].toInt() and 0xFF
+            Log.d("XR_LAB", "Mask first byte: $first (${width}x${height})")
+            lastMaskLogMs = now
         }
         val buffer = ByteBuffer.allocateDirect(width * height)
         buffer.order(ByteOrder.nativeOrder())
@@ -138,35 +170,18 @@ class XrOverlayRenderer {
         EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_HEIGHT, height, 0)
         surfaceWidth = width[0].coerceAtLeast(1)
         surfaceHeight = height[0].coerceAtLeast(1)
+        Log.d("XR_LAB", "EGL surface size: ${surfaceWidth}x${surfaceHeight}")
     }
 
     private fun initGlObjects() {
         program = createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
         GLES30.glUseProgram(program)
 
-        val quad = floatArrayOf(
-            -1f, -1f, 0f, 1f,
-            1f, -1f, 1f, 1f,
-            -1f, 1f, 0f, 0f,
-            1f, 1f, 1f, 0f
-        )
-        val quadBuffer = toFloatBuffer(quad)
-
-        val vboIds = IntArray(1)
-        GLES30.glGenBuffers(1, vboIds, 0)
-        vbo = vboIds[0]
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbo)
-        GLES30.glBufferData(
-            GLES30.GL_ARRAY_BUFFER,
-            quad.size * 4,
-            quadBuffer,
-            GLES30.GL_STATIC_DRAW
-        )
-
-        GLES30.glEnableVertexAttribArray(0)
-        GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 16, 0)
-        GLES30.glEnableVertexAttribArray(1)
-        GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 16, 8)
+        val vaoIds = IntArray(1)
+        GLES30.glGenVertexArrays(1, vaoIds, 0)
+        vao = vaoIds[0]
+        GLES30.glBindVertexArray(vao)
+        GLES30.glBindVertexArray(0)
 
         cameraTex = createTexture2d()
         maskTex = createTexture2d(redOnly = true)
@@ -178,10 +193,12 @@ class XrOverlayRenderer {
         val uMask = GLES30.glGetUniformLocation(program, "uMask")
         val uOverlayColor = GLES30.glGetUniformLocation(program, "uOverlayColor")
         val uOverlayAlpha = GLES30.glGetUniformLocation(program, "uOverlayAlpha")
+        val uDebugMode = GLES30.glGetUniformLocation(program, "uDebugMode")
         GLES30.glUniform1i(uCamera, 0)
         GLES30.glUniform1i(uMask, 1)
         GLES30.glUniform3f(uOverlayColor, 0f, 1f, 0f)
         GLES30.glUniform1f(uOverlayAlpha, 0.8f)
+        GLES30.glUniform1i(uDebugMode, debugMode.id)
 
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
@@ -224,10 +241,15 @@ class XrOverlayRenderer {
                 uploadTexture(maskTex, maskW, maskH, localMask, redOnly = true)
             }
 
+            GLES30.glUseProgram(program)
+            val uDebugMode = GLES30.glGetUniformLocation(program, "uDebugMode")
+            GLES30.glUniform1i(uDebugMode, debugMode.id)
             GLES30.glViewport(0, 0, surfaceWidth, surfaceHeight)
             GLES30.glClearColor(0f, 0f, 0f, 0f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+            GLES30.glBindVertexArray(vao)
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+            GLES30.glBindVertexArray(0)
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
         }
     }
@@ -332,11 +354,11 @@ class XrOverlayRenderer {
 
     private fun releaseGlObjects() {
         if (program != 0) GLES30.glDeleteProgram(program)
-        if (vbo != 0) GLES30.glDeleteBuffers(1, intArrayOf(vbo), 0)
+        if (vao != 0) GLES30.glDeleteVertexArrays(1, intArrayOf(vao), 0)
         if (cameraTex != 0) GLES30.glDeleteTextures(1, intArrayOf(cameraTex), 0)
         if (maskTex != 0) GLES30.glDeleteTextures(1, intArrayOf(maskTex), 0)
         program = 0
-        vbo = 0
+        vao = 0
         cameraTex = 0
         maskTex = 0
     }
@@ -365,12 +387,14 @@ class XrOverlayRenderer {
     companion object {
         private const val VERTEX_SHADER = """
             #version 300 es
-            layout(location = 0) in vec2 aPos;
-            layout(location = 1) in vec2 aUv;
             out vec2 vUv;
             void main() {
-                vUv = aUv;
-                gl_Position = vec4(aPos, 0.0, 1.0);
+                vec2 pos = vec2(
+                    (gl_VertexID == 1) ? 3.0 : -1.0,
+                    (gl_VertexID == 2) ? 3.0 : -1.0
+                );
+                vUv = 0.5 * (pos + vec2(1.0));
+                gl_Position = vec4(pos, 0.0, 1.0);
             }
         """
 
@@ -382,10 +406,28 @@ class XrOverlayRenderer {
             uniform sampler2D uMask;
             uniform vec3 uOverlayColor;
             uniform float uOverlayAlpha;
+            uniform int uDebugMode;
             out vec4 fragColor;
             void main() {
-                vec3 cam = texture(uCamera, vUv).rgb;
-                float mask = texture(uMask, vUv).r;
+                vec2 uv = vec2(vUv.x, 1.0 - vUv.y);
+                vec3 cam = texture(uCamera, uv).rgb;
+                float mask = texture(uMask, uv).r;
+                if (uDebugMode == 1) {
+                    fragColor = vec4(cam, 1.0);
+                    return;
+                }
+                if (uDebugMode == 2) {
+                    fragColor = vec4(vec3(mask), 1.0);
+                    return;
+                }
+                if (uDebugMode == 3) {
+                    fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+                    return;
+                }
+                if (uDebugMode == 4) {
+                    fragColor = vec4(vUv, 0.0, 1.0);
+                    return;
+                }
                 float alpha = clamp(mask * uOverlayAlpha, 0.0, 1.0);
                 vec3 outColor = mix(cam, uOverlayColor, alpha);
                 fragColor = vec4(outColor, 1.0);

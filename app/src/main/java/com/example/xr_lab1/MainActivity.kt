@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import androidx.activity.ComponentActivity
@@ -31,6 +32,7 @@ import androidx.xr.runtime.SessionCreateSuccess
 import androidx.xr.runtime.SessionCreateUnsupportedDevice
 import androidx.xr.runtime.SessionConfigureSuccess
 import androidx.xr.runtime.math.FloatSize2d
+import androidx.xr.runtime.math.IntSize2d
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.SurfaceEntity
@@ -43,6 +45,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import androidx.lifecycle.lifecycleScope
@@ -57,6 +60,7 @@ class MainActivity : ComponentActivity() {
     private var xrOverlaySurface: Surface? = null
     private var overlayRenderer: XrOverlayRenderer? = null
     private var headLockJob: Job? = null
+    private val frameCounter = AtomicInteger(0)
 
     // 권한 요청 런처
     private val requestPermissionLauncher =
@@ -177,7 +181,9 @@ class MainActivity : ComponentActivity() {
 
             scope.launch {
                 try {
-                    networkClient.sendFrame(jpegByteArray)
+                    val frameId = frameCounter.incrementAndGet()
+                    val sendTsMs = SystemClock.elapsedRealtime()
+                    networkClient.sendFrame(jpegByteArray, frameId, sendTsMs)
                     kotlinx.coroutines.delay(200) // Reduce send rate to ease server load
                 } catch (e: Exception) {
                     Log.e("XR_LAB", "전송 중 에러: ${e.message}")
@@ -219,6 +225,14 @@ class MainActivity : ComponentActivity() {
                         stereoMode = SurfaceEntity.StereoMode.MONO,
                     )
                 entity.parent = session.scene.activitySpace
+                @SuppressLint("RestrictedApi")
+                entity.setSurfacePixelDimensions(IntSize2d(640, 480))
+                entity.edgeFeatheringParams =
+                    SurfaceEntity.EdgeFeatheringParams.RectangleFeather(
+                        leftRight = 0.05f,
+                        topBottom = 0.05f
+                    )
+                Log.d("XR_LAB", "Surface pixel size set: 640x480")
                 surfaceEntity = entity
 
                 val surface = entity.getSurface()
