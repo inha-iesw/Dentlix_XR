@@ -43,6 +43,7 @@ class XrOverlayRenderer {
     private var maskDirty = false
     private var lastCameraLogMs = 0L
     private var lastMaskLogMs = 0L
+    private var lastRenderLogMs = 0L
     @Volatile
     private var debugMode = DebugMode.COMPOSITE
 
@@ -206,6 +207,7 @@ class XrOverlayRenderer {
 
     private fun renderLoop() {
         while (running) {
+            val frameStartMs = SystemClock.elapsedRealtime()
             var localCamera: ByteBuffer? = null
             var localMask: ByteBuffer? = null
             val camW: Int
@@ -251,6 +253,12 @@ class XrOverlayRenderer {
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
             GLES30.glBindVertexArray(0)
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+            val frameEndMs = SystemClock.elapsedRealtime()
+            if (frameEndMs - lastRenderLogMs > 1000) {
+                val renderMs = frameEndMs - frameStartMs
+                Log.d("XR_LAB", "Render time: ${renderMs}ms")
+                lastRenderLogMs = frameEndMs
+            }
         }
     }
 
