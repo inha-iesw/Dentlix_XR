@@ -7,6 +7,9 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SCENE_UNDERSTANDING" />
+    <uses-permission android:name="android.permission.HEAD_TRACKING" />
+    <uses-permission android:name="com.google.android.xr.permission.SPATIAL_COMPUTING" />
 
     <application
         android:allowBackup="true"
@@ -21,12 +24,22 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.XR_lab1">
+            android:theme="@style/Theme.XR_lab1"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|uiMode">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <property
+                android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
+                android:value="full_space" />
+
         </activity>
+        <meta-data
+            android:name="com.google.android.xr.platform.XR_MODE"
+            android:value="FULL_SPACE" />
     </application>
 
 </manifest>
