@@ -28,6 +28,8 @@ class XrOverlayRenderer {
     private var vao = 0
     private var cameraTex = 0
     private var maskTex = 0
+    private var uDebugModeLocation = 0
+    private var uZoomLocation = 0
 
     private var surfaceWidth = 1
     private var surfaceHeight = 1
@@ -46,6 +48,8 @@ class XrOverlayRenderer {
     private var lastRenderLogMs = 0L
     @Volatile
     private var debugMode = DebugMode.COMPOSITE
+    @Volatile
+    private var zoom = 2.0f
 
     enum class DebugMode(val id: Int) {
         COMPOSITE(0),
@@ -57,6 +61,10 @@ class XrOverlayRenderer {
 
     fun setDebugMode(mode: DebugMode) {
         debugMode = mode
+    }
+
+    fun setZoom(scale: Float) {
+        zoom = scale.coerceAtLeast(1.0f)
     }
 
     fun start(surface: Surface) {
@@ -194,12 +202,14 @@ class XrOverlayRenderer {
         val uMask = GLES30.glGetUniformLocation(program, "uMask")
         val uOverlayColor = GLES30.glGetUniformLocation(program, "uOverlayColor")
         val uOverlayAlpha = GLES30.glGetUniformLocation(program, "uOverlayAlpha")
-        val uDebugMode = GLES30.glGetUniformLocation(program, "uDebugMode")
+        uDebugModeLocation = GLES30.glGetUniformLocation(program, "uDebugMode")
+        uZoomLocation = GLES30.glGetUniformLocation(program, "uZoom")
         GLES30.glUniform1i(uCamera, 0)
         GLES30.glUniform1i(uMask, 1)
         GLES30.glUniform3f(uOverlayColor, 0f, 1f, 0f)
         GLES30.glUniform1f(uOverlayAlpha, 0.8f)
-        GLES30.glUniform1i(uDebugMode, debugMode.id)
+        GLES30.glUniform1i(uDebugModeLocation, debugMode.id)
+        GLES30.glUniform1f(uZoomLocation, zoom)
 
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
@@ -244,8 +254,8 @@ class XrOverlayRenderer {
             }
 
             GLES30.glUseProgram(program)
-            val uDebugMode = GLES30.glGetUniformLocation(program, "uDebugMode")
-            GLES30.glUniform1i(uDebugMode, debugMode.id)
+            GLES30.glUniform1i(uDebugModeLocation, debugMode.id)
+            GLES30.glUniform1f(uZoomLocation, zoom)
             GLES30.glViewport(0, 0, surfaceWidth, surfaceHeight)
             GLES30.glClearColor(0f, 0f, 0f, 0f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
@@ -415,9 +425,12 @@ class XrOverlayRenderer {
             uniform vec3 uOverlayColor;
             uniform float uOverlayAlpha;
             uniform int uDebugMode;
+            uniform float uZoom;
             out vec4 fragColor;
             void main() {
                 vec2 uv = vec2(vUv.x, 1.0 - vUv.y);
+                uv = (uv - 0.5) / uZoom + 0.5;
+                uv = clamp(uv, 0.0, 1.0);
                 vec3 cam = texture(uCamera, uv).rgb;
                 float mask = texture(uMask, uv).r;
                 if (uDebugMode == 1) {
