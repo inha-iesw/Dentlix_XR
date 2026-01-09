@@ -1,11 +1,9 @@
-package com.example.xr_lab1
+﻿package com.example.xr_lab1
 
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.os.Bundle
-import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import androidx.activity.ComponentActivity
@@ -38,14 +36,10 @@ import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.Space
 import androidx.xr.scenecore.scene
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import androidx.lifecycle.lifecycleScope
@@ -53,14 +47,11 @@ import androidx.lifecycle.lifecycleScope
 class MainActivity : ComponentActivity() {
 
     private lateinit var cameraExecutor: ExecutorService
-    private val networkClient = NetworkClient()
-    private val scope = CoroutineScope(Dispatchers.IO)
     private var xrSession: Session? = null
     private var surfaceEntity: SurfaceEntity? = null
     private var xrOverlaySurface: Surface? = null
     private var overlayRenderer: XrOverlayRenderer? = null
     private var headLockJob: Job? = null
-    private val frameCounter = AtomicInteger(0)
 
     // 권한 요청 런처
     private val requestPermissionLauncher =
@@ -71,9 +62,6 @@ class MainActivity : ComponentActivity() {
                 Log.e("XR_LAB", "카메라 권한이 거부되었습니다.")
             }
         }
-
-    @Volatile
-    private var isSending = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,14 +90,6 @@ class MainActivity : ComponentActivity() {
         }
 
         setupXrScene()
-
-        scope.launch {
-            networkClient.connect()
-            networkClient.startMaskReceiver(this)
-            networkClient.maskFlow.collect { frame ->
-                overlayRenderer?.updateMask(frame.bytes, frame.width, frame.height)
-            }
-        }
     }
 
     override fun onDestroy() {
@@ -119,7 +99,6 @@ class MainActivity : ComponentActivity() {
         overlayRenderer?.stop()
         headLockJob?.cancel()
         cameraExecutor.shutdown()
-        networkClient.close()
     }
 
     private fun startCamera() {
@@ -164,36 +143,11 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("UnsafeOptInUsageError")
     private fun processImage(imageProxy: ImageProxy) {
-        if (isSending) {
-            imageProxy.close()
-            return
-        }
-
         try {
-            isSending = true
-
             val bitmap = imageProxy.toBitmap()
-
-            val stream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-            val jpegByteArray = stream.toByteArray()
             overlayRenderer?.updateCameraFrame(bitmap)
-
-            scope.launch {
-                try {
-                    val frameId = frameCounter.incrementAndGet()
-                    val sendTsMs = SystemClock.elapsedRealtime()
-                    networkClient.sendFrame(jpegByteArray, frameId, sendTsMs)
-                    kotlinx.coroutines.delay(200) // Reduce send rate to ease server load
-                } catch (e: Exception) {
-                    Log.e("XR_LAB", "전송 중 에러: ${e.message}")
-                } finally {
-                    isSending = false
-                }
-            }
         } catch (e: Exception) {
             Log.e("XR_LAB", "Image Analysis Error", e)
-            isSending = false // Reset flag on error
         } finally {
             imageProxy.close()
         }
@@ -221,7 +175,7 @@ class MainActivity : ComponentActivity() {
                     SurfaceEntity.create(
                         session = session,
                         pose = Pose.Identity,
-                        shape = SurfaceEntity.Shape.Quad(FloatSize2d(1.2f, 0.7f)),
+                        shape = SurfaceEntity.Shape.Quad(FloatSize2d(0.6f, 0.5f)),
                         stereoMode = SurfaceEntity.StereoMode.MONO,
                     )
                 entity.parent = session.scene.activitySpace
@@ -229,9 +183,10 @@ class MainActivity : ComponentActivity() {
                 entity.setSurfacePixelDimensions(IntSize2d(640, 480))
                 entity.edgeFeatheringParams =
                     SurfaceEntity.EdgeFeatheringParams.RectangleFeather(
-                        leftRight = 0.05f,
-                        topBottom = 0.05f
+                        leftRight = 0.00f,
+                        topBottom = 0.00f
                     )
+                entity.setAlpha(1.0f)
                 Log.d("XR_LAB", "Surface pixel size set: 640x480")
                 surfaceEntity = entity
 
@@ -257,7 +212,7 @@ class MainActivity : ComponentActivity() {
                     val head = session.scene.spatialUser.head
                     if (head != null) {
                         val headPose = head.activitySpacePose
-                        val offset = headPose.forward * 0.6f
+                        val offset = headPose.forward * 0.4f
                         val targetPose = headPose.translate(offset)
                         entity.setPose(targetPose, Space.ACTIVITY)
                     }
@@ -269,6 +224,7 @@ class MainActivity : ComponentActivity() {
     private fun startXrOverlayRenderer(surface: Surface) {
         if (overlayRenderer == null) {
             overlayRenderer = XrOverlayRenderer()
+            overlayRenderer?.setZoomCenterY(0.95f)
         }
         overlayRenderer?.start(surface)
         Log.d("XR_LAB", "XR overlay surface ready: $surface")
