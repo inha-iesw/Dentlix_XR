@@ -224,7 +224,11 @@ class MainActivity : ComponentActivity() {
     private fun startXrOverlayRenderer(surface: Surface) {
         if (overlayRenderer == null) {
             overlayRenderer = XrOverlayRenderer()
-            overlayRenderer?.setZoomCenterY(0.95f)
+            overlayRenderer?.setZoom(4.0f)
+            overlayRenderer?.setZoomCenterX(0.4f)
+            overlayRenderer?.setZoomCenterY(1.0f)
+            overlayRenderer?.setInsetSize(0.38f, 0.38f)
+            overlayRenderer?.setInsetMargin(0.04f, 0.04f)
         }
         overlayRenderer?.start(surface)
         Log.d("XR_LAB", "XR overlay surface ready: $surface")

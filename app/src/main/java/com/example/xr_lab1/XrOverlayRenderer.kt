@@ -28,7 +28,10 @@ class XrOverlayRenderer {
     private var vao = 0
     private var cameraTex = 0
     private var uZoomLocation = 0
+    private var uZoomCenterXLocation = 0
     private var uZoomCenterYLocation = 0
+    private var uInsetSizeLocation = 0
+    private var uInsetMarginLocation = 0
 
     private var surfaceWidth = 1
     private var surfaceHeight = 1
@@ -43,7 +46,17 @@ class XrOverlayRenderer {
     @Volatile
     private var zoom = 3.0f
     @Volatile
+    private var zoomCenterX = 0.5f
+    @Volatile
     private var zoomCenterY = 0.5f
+    @Volatile
+    private var insetWidth = 0.45f
+    @Volatile
+    private var insetHeight = 0.45f
+    @Volatile
+    private var insetMarginX = 0.04f
+    @Volatile
+    private var insetMarginY = 0.04f
 
     fun setZoom(scale: Float) {
         zoom = scale.coerceAtLeast(1.0f)
@@ -51,6 +64,20 @@ class XrOverlayRenderer {
 
     fun setZoomCenterY(centerY: Float) {
         zoomCenterY = centerY.coerceIn(0.0f, 1.0f)
+    }
+
+    fun setZoomCenterX(centerX: Float) {
+        zoomCenterX = centerX.coerceIn(0.0f, 1.0f)
+    }
+
+    fun setInsetSize(width: Float, height: Float) {
+        insetWidth = width.coerceIn(0.05f, 1.0f)
+        insetHeight = height.coerceIn(0.05f, 1.0f)
+    }
+
+    fun setInsetMargin(marginX: Float, marginY: Float) {
+        insetMarginX = marginX.coerceIn(0.0f, 0.45f)
+        insetMarginY = marginY.coerceIn(0.0f, 0.45f)
     }
 
     fun start(surface: Surface) {
@@ -157,10 +184,16 @@ class XrOverlayRenderer {
 
         val uCamera = GLES30.glGetUniformLocation(program, "uCamera")
         uZoomLocation = GLES30.glGetUniformLocation(program, "uZoom")
+        uZoomCenterXLocation = GLES30.glGetUniformLocation(program, "uZoomCenterX")
         uZoomCenterYLocation = GLES30.glGetUniformLocation(program, "uZoomCenterY")
+        uInsetSizeLocation = GLES30.glGetUniformLocation(program, "uInsetSize")
+        uInsetMarginLocation = GLES30.glGetUniformLocation(program, "uInsetMargin")
         GLES30.glUniform1i(uCamera, 0)
         GLES30.glUniform1f(uZoomLocation, zoom)
+        GLES30.glUniform1f(uZoomCenterXLocation, zoomCenterX)
         GLES30.glUniform1f(uZoomCenterYLocation, zoomCenterY)
+        GLES30.glUniform2f(uInsetSizeLocation, insetWidth, insetHeight)
+        GLES30.glUniform2f(uInsetMarginLocation, insetMarginX, insetMarginY)
 
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
@@ -194,7 +227,10 @@ class XrOverlayRenderer {
 
             GLES30.glUseProgram(program)
             GLES30.glUniform1f(uZoomLocation, zoom)
+            GLES30.glUniform1f(uZoomCenterXLocation, zoomCenterX)
             GLES30.glUniform1f(uZoomCenterYLocation, zoomCenterY)
+            GLES30.glUniform2f(uInsetSizeLocation, insetWidth, insetHeight)
+            GLES30.glUniform2f(uInsetMarginLocation, insetMarginX, insetMarginY)
             GLES30.glViewport(0, 0, surfaceWidth, surfaceHeight)
             GLES30.glClearColor(0f, 0f, 0f, 0f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
@@ -338,11 +374,23 @@ class XrOverlayRenderer {
             in vec2 vUv;
             uniform sampler2D uCamera;
             uniform float uZoom;
+            uniform float uZoomCenterX;
             uniform float uZoomCenterY;
+            uniform vec2 uInsetSize;
+            uniform vec2 uInsetMargin;
             out vec4 fragColor;
             void main() {
-                vec2 uv = vec2(vUv.x, 1.0 - vUv.y);
-                vec2 zoomCenter = vec2(0.5, uZoomCenterY);
+                vec2 insetMin = vec2(1.0 - uInsetMargin.x - uInsetSize.x, uInsetMargin.y);
+                vec2 insetMax = insetMin + uInsetSize;
+                if (vUv.x < insetMin.x || vUv.x > insetMax.x ||
+                    vUv.y < insetMin.y || vUv.y > insetMax.y) {
+                    fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                    return;
+                }
+
+                vec2 local = (vUv - insetMin) / uInsetSize;
+                vec2 uv = vec2(local.x, 1.0 - local.y);
+                vec2 zoomCenter = vec2(uZoomCenterX, uZoomCenterY);
                 uv = (uv - zoomCenter) / uZoom + zoomCenter;
                 uv = clamp(uv, 0.0, 1.0);
                 vec3 cam = texture(uCamera, uv).rgb;
