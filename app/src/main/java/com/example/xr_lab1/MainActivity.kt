@@ -3,6 +3,9 @@
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Bundle
 import android.util.Log
 import android.view.Surface
@@ -32,17 +35,21 @@ import androidx.xr.runtime.SessionConfigureSuccess
 import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.IntSize2d
 import androidx.xr.runtime.math.Pose
-import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.Space
 import androidx.xr.scenecore.scene
+import com.whispercpp.whisper.WhisperContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.runBlocking
+import kotlin.math.max
+import kotlin.math.min
 
 class MainActivity : ComponentActivity() {
 
@@ -52,6 +59,17 @@ class MainActivity : ComponentActivity() {
     private var xrOverlaySurface: Surface? = null
     private var overlayRenderer: XrOverlayRenderer? = null
     private var headLockJob: Job? = null
+    private var whisperContext: WhisperContext? = null
+    private var audioJob: Job? = null
+    private var audioRecord: AudioRecord? = null
+    private var currentZoom = 1.0f
+
+    private val whisperSampleRate = 16000
+    private val defaultZoom = 4.0f
+    private val minZoom = 1.0f
+    private val vadThreshold = 800
+    private val vadSilenceMs = 1000
+    private val vadMinSpeechMs = 500
 
     // 권한 요청 런처
     private val requestPermissionLauncher =
@@ -63,8 +81,18 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val requestAudioPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+            if (isGranted) {
+                startWhisperListening()
+            } else {
+                Log.e("XR_LAB_WHISPER", "오디오 권한이 거부되었습니다.")
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d("XR_LAB", "onCreate: enter")
 
         // 카메라 쓰레드 초기화
         cameraExecutor = Executors.newSingleThreadExecutor()
@@ -76,6 +104,14 @@ class MainActivity : ComponentActivity() {
             startCamera()
         } else {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            startWhisperListening()
+        } else {
+            requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
 
         setContent {
@@ -98,6 +134,18 @@ class MainActivity : ComponentActivity() {
         xrOverlaySurface?.release()
         overlayRenderer?.stop()
         headLockJob?.cancel()
+        audioJob?.cancel()
+        audioRecord?.let { record ->
+            try {
+                record.stop()
+            } catch (e: IllegalStateException) {
+                Log.w("XR_LAB_WHISPER", "AudioRecord stop failed", e)
+            }
+            record.release()
+        }
+        runBlocking {
+            whisperContext?.release()
+        }
         cameraExecutor.shutdown()
     }
 
@@ -224,14 +272,160 @@ class MainActivity : ComponentActivity() {
     private fun startXrOverlayRenderer(surface: Surface) {
         if (overlayRenderer == null) {
             overlayRenderer = XrOverlayRenderer()
-            overlayRenderer?.setZoom(4.0f)
+            overlayRenderer?.setZoom(1.0f)
             overlayRenderer?.setZoomCenterX(0.4f)
             overlayRenderer?.setZoomCenterY(1.0f)
             overlayRenderer?.setInsetSize(0.38f, 0.38f)
             overlayRenderer?.setInsetMargin(0.04f, 0.04f)
         }
+        currentZoom = 1.0f
         overlayRenderer?.start(surface)
         Log.d("XR_LAB", "XR overlay surface ready: $surface")
+    }
+
+    private fun startWhisperListening() {
+        audioJob?.cancel()
+        audioJob = lifecycleScope.launch(Dispatchers.IO) {
+            Log.d("XR_LAB_WHISPER", "startWhisperListening: begin")
+            try {
+                val context = WhisperContext.createContextFromAsset(assets, "model/ggml-tiny.bin")
+                whisperContext = context
+                Log.d("XR_LAB_WHISPER", "startWhisperListening: model loaded")
+
+                val minBufferBytes = AudioRecord.getMinBufferSize(
+                    whisperSampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+                if (minBufferBytes <= 0) {
+                    throw IllegalStateException("Invalid AudioRecord buffer size: $minBufferBytes")
+                }
+                val minBufferShorts = max(1, minBufferBytes / 2)
+                val record = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    whisperSampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    max(minBufferBytes, whisperSampleRate * 2)
+                )
+                audioRecord = record
+                record.startRecording()
+                Log.d("XR_LAB_WHISPER", "startWhisperListening: recording started")
+
+                val readBuffer = ShortArray(minBufferShorts)
+                val maxSpeechSamples = whisperSampleRate * 10
+                var speechBuffer = ShortArray(maxSpeechSamples)
+                var speechLen = 0
+                var inSpeech = false
+                var silenceSamples = 0
+                val vadSilenceSamples = (whisperSampleRate * vadSilenceMs) / 1000
+                val vadMinSpeechSamples = (whisperSampleRate * vadMinSpeechMs) / 1000
+
+                while (isActive) {
+                    val read = record.read(readBuffer, 0, readBuffer.size)
+                    if (read <= 0) continue
+                    var sum = 0L
+                    for (i in 0 until read) {
+                        sum += kotlin.math.abs(readBuffer[i].toInt())
+                    }
+                    val avgAbs = (sum / read).toInt()
+                    val isSpeech = avgAbs > vadThreshold
+
+                    if (isSpeech) {
+                        if (!inSpeech) {
+                            inSpeech = true
+                            speechLen = 0
+                            silenceSamples = 0
+                            Log.d("XR_LAB_WHISPER", "Speech start detected")
+                        }
+                        silenceSamples = 0
+                    } else if (inSpeech) {
+                        silenceSamples += read
+                    }
+
+                    if (inSpeech) {
+                        val needed = speechLen + read
+                        if (needed > speechBuffer.size) {
+                            val newSize = max(needed, speechBuffer.size * 2)
+                            speechBuffer = speechBuffer.copyOf(newSize)
+                        }
+                        System.arraycopy(readBuffer, 0, speechBuffer, speechLen, read)
+                        speechLen += read
+
+                        if (silenceSamples >= vadSilenceSamples) {
+                            val endLen = max(0, speechLen - silenceSamples)
+                            if (endLen >= vadMinSpeechSamples) {
+                                Log.d("XR_LAB_WHISPER", "Speech end detected (samples=$endLen)")
+                                Log.d("XR_LAB_WHISPER", "STT start")
+                                val audio = FloatArray(endLen)
+                                for (i in 0 until endLen) {
+                                    audio[i] = speechBuffer[i] / 32768.0f
+                                }
+                                val result = context.transcribeData(audio, printTimestamp = false)
+                                Log.d("XR_LAB_WHISPER", "STT end")
+                                handleWhisperCommand(result)
+                            } else {
+                                Log.d("XR_LAB_WHISPER", "VAD discard short speech samples=$endLen")
+                            }
+                            inSpeech = false
+                            silenceSamples = 0
+                            speechLen = 0
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("XR_LAB_WHISPER", "Whisper listening failed", e)
+            }
+            Log.d("XR_LAB_WHISPER", "startWhisperListening: end")
+        }
+    }
+
+    private fun handleWhisperCommand(text: String) {
+        val normalized = text.trim().replace(Regex("\\s+"), " ")
+        Log.i("XR_LAB_WHISPER", "STT result: $normalized")
+        val targetZoom = parseZoomCommand(normalized) ?: return
+        lifecycleScope.launch(Dispatchers.Main) {
+            applyZoom(targetZoom)
+        }
+    }
+
+    private fun parseZoomCommand(text: String): Float? {
+        if (text.contains("초기화")) {
+            return minZoom
+        }
+        if (!text.contains("확대")) {
+            return null
+        }
+        val match = Regex("(\\d+)\\s*배").find(text)
+        if (match != null) {
+            val value = match.groupValues[1].toFloatOrNull()
+            if (value != null && value > 0f) {
+                return value
+            }
+        }
+        val koreanNumber = mapOf(
+            "한" to 1f,
+            "두" to 2f,
+            "세" to 3f,
+            "새" to 3f,
+            "네" to 4f,
+            "내" to 4f,
+            "다섯" to 5f
+        )
+        for ((key, value) in koreanNumber) {
+            if (text.contains("$key 배")) {
+                return value
+            }
+        }
+        return defaultZoom
+    }
+
+    private fun applyZoom(zoom: Float) {
+        val nextZoom = max(minZoom, zoom)
+        if (currentZoom == nextZoom) return
+        currentZoom = nextZoom
+        overlayRenderer?.setZoom(nextZoom)
+        Log.d("XR_LAB_WHISPER", "Zoom set to $nextZoom")
     }
 }
 

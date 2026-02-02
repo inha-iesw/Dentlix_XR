@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "XR_lab1"
 include(":app")
- 
+include(":whisperlib:lib")
