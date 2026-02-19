@@ -9,7 +9,10 @@
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
+**/build/
 /captures
 .externalNativeBuild
 .cxx
 local.properties
+app/src/main/assets/model/*.bin
+/thirdparty/whisper.cpp
