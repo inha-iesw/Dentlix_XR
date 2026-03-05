@@ -5,7 +5,7 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
-import android.view.Surface
+import android.view.Surface as AndroidSurface
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,15 +16,16 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.material3.Surface as ComposeSurface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.example.xr_lab1.ui.theme.XR_lab1Theme
-import androidx.xr.runtime.Session
+import androidx.xr.arcore.RenderViewpoint
 import androidx.xr.runtime.Config
+import androidx.xr.runtime.Session
 import androidx.xr.runtime.SessionCreateApkRequired
 import androidx.xr.runtime.SessionCreateSuccess
 import androidx.xr.runtime.SessionCreateUnsupportedDevice
@@ -32,55 +33,90 @@ import androidx.xr.runtime.SessionConfigureSuccess
 import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.IntSize2d
 import androidx.xr.runtime.math.Pose
-import androidx.xr.runtime.math.Vector3
+import androidx.xr.scenecore.ExperimentalSurfaceEntityPixelDimensionsApi
 import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.Space
 import androidx.xr.scenecore.scene
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import androidx.lifecycle.lifecycleScope
 
 class MainActivity : ComponentActivity() {
+    private val useWavKwsTest = true
+    private val kwsTestWavAssetPath = "practice/Zoom_test1_answer_3.wav"
 
     private lateinit var cameraExecutor: ExecutorService
     private var xrSession: Session? = null
     private var surfaceEntity: SurfaceEntity? = null
-    private var xrOverlaySurface: Surface? = null
+    private var xrOverlaySurface: AndroidSurface? = null
     private var overlayRenderer: XrOverlayRenderer? = null
+    private var kwsEngine: KwsEngine? = null
     private var headLockJob: Job? = null
 
-    // 권한 요청 런처
-    private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
+    private val requestPermissionsLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            val cameraGranted = grants[Manifest.permission.CAMERA] == true
+            val micGranted = grants[Manifest.permission.RECORD_AUDIO] == true
+            if (cameraGranted) {
                 startCamera()
             } else {
                 Log.e("XR_LAB", "카메라 권한이 거부되었습니다.")
+            }
+            if (useWavKwsTest) {
+                startKws()
+            } else if (micGranted) {
+                startKws()
+            } else {
+                Log.e("XR_KWS", "마이크 권한이 거부되었습니다.")
             }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 카메라 쓰레드 초기화
         cameraExecutor = Executors.newSingleThreadExecutor()
+        try {
+            kwsEngine = KwsEngine(
+                context = this,
+                modelAssetPath = "model/kws_int8.tflite",
+                triggerLabel = "zoom",
+                triggerThreshold = 0.7f,
+                testWavAssetPath = if (useWavKwsTest) kwsTestWavAssetPath else null,
+            ) { label, score ->
+                runOnUiThread {
+                    Log.i("XR_KWS", "Keyword detected: $label ($score)")
+                    overlayRenderer?.setZoom(6.0f)
+                }
+            }
+        } catch (e: Exception) {
+            kwsEngine = null
+            Log.e("XR_KWS", "KWS init failed. Put model at assets/model/kws_int8.tflite", e)
+        }
 
-        // 권한 체크 및 카메라 시작
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
+        if (hasPermission(Manifest.permission.CAMERA)) {
             startCamera()
-        } else {
-            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+        if (useWavKwsTest || hasPermission(Manifest.permission.RECORD_AUDIO)) {
+            startKws()
+        }
+        val requiredPermissions = mutableListOf<String>()
+        if (!hasPermission(Manifest.permission.CAMERA)) {
+            requiredPermissions.add(Manifest.permission.CAMERA)
+        }
+        if (!useWavKwsTest && !hasPermission(Manifest.permission.RECORD_AUDIO)) {
+            requiredPermissions.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (requiredPermissions.isNotEmpty()) {
+            requestPermissionsLauncher.launch(requiredPermissions.toTypedArray())
         }
 
         setContent {
             XR_lab1Theme {
-                Surface(
+                ComposeSurface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
@@ -97,8 +133,20 @@ class MainActivity : ComponentActivity() {
         surfaceEntity?.dispose()
         xrOverlaySurface?.release()
         overlayRenderer?.stop()
+        kwsEngine?.close()
         headLockJob?.cancel()
         cameraExecutor.shutdown()
+    }
+
+    private fun hasPermission(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun startKws() {
+        try {
+            kwsEngine?.start()
+        } catch (e: Exception) {
+            Log.e("XR_KWS", "KWS start failed", e)
+        }
     }
 
     private fun startCamera() {
@@ -153,6 +201,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(ExperimentalSurfaceEntityPixelDimensionsApi::class)
     private fun setupXrScene() {
         if (xrSession != null) return
 
@@ -165,7 +214,7 @@ class MainActivity : ComponentActivity() {
 
                 val configResult =
                     session.configure(
-                        session.config.copy(headTracking = Config.HeadTrackingMode.LAST_KNOWN)
+                        session.config.copy(deviceTracking = Config.DeviceTrackingMode.LAST_KNOWN)
                     )
                 if (configResult !is SessionConfigureSuccess) {
                     Log.e("XR_LAB", "Session configure failed: $configResult")
@@ -179,7 +228,6 @@ class MainActivity : ComponentActivity() {
                         stereoMode = SurfaceEntity.StereoMode.MONO,
                     )
                 entity.parent = session.scene.activitySpace
-                @SuppressLint("RestrictedApi")
                 entity.setSurfacePixelDimensions(IntSize2d(640, 480))
                 entity.edgeFeatheringParams =
                     SurfaceEntity.EdgeFeatheringParams.RectangleFeather(
@@ -187,7 +235,7 @@ class MainActivity : ComponentActivity() {
                         topBottom = 0.00f
                     )
                 entity.setAlpha(1.0f)
-                Log.d("XR_LAB", "Surface pixel size set: 640x480")
+                Log.d("XR_LAB", "Surface entity created")
                 surfaceEntity = entity
 
                 val surface = entity.getSurface()
@@ -208,10 +256,17 @@ class MainActivity : ComponentActivity() {
         headLockJob?.cancel()
         headLockJob =
             lifecycleScope.launch {
+                var monoViewpoint: RenderViewpoint? = null
                 while (isActive) {
-                    val head = session.scene.spatialUser.head
-                    if (head != null) {
-                        val headPose = head.activitySpacePose
+                    if (monoViewpoint == null) {
+                        monoViewpoint = RenderViewpoint.mono(session)
+                    }
+                    val perceptionPose = monoViewpoint?.state?.value?.pose
+                    if (perceptionPose != null) {
+                        val headPose =
+                            session.scene.perceptionSpace
+                                .getScenePoseFromPerceptionPose(perceptionPose)
+                                .activitySpacePose
                         val offset = headPose.forward * 0.4f
                         val targetPose = headPose.translate(offset)
                         entity.setPose(targetPose, Space.ACTIVITY)
@@ -221,7 +276,7 @@ class MainActivity : ComponentActivity() {
             }
     }
 
-    private fun startXrOverlayRenderer(surface: Surface) {
+    private fun startXrOverlayRenderer(surface: AndroidSurface) {
         if (overlayRenderer == null) {
             overlayRenderer = XrOverlayRenderer()
             overlayRenderer?.setZoom(4.0f)

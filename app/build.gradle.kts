@@ -77,7 +77,9 @@ dependencies {
     // alpha01 버전으로 통일 (compose.platform과 scenecore가 호환됨)
     implementation("androidx.xr.compose:compose:1.0.0-alpha10")
     implementation("androidx.xr.runtime:runtime:1.0.0-alpha10")
-    implementation("androidx.xr.scenecore:scenecore:1.0.0-alpha10")
+    implementation("androidx.xr.scenecore:scenecore:1.0.0-alpha11")
+    implementation("androidx.xr.arcore:arcore:1.0.0-alpha10")
     implementation("androidx.xr.compose.material3:material3:1.0.0-alpha10")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }
