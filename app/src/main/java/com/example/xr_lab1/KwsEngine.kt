@@ -70,7 +70,7 @@ class KwsEngine(
         ).coerceAtLeast(HOP_SAMPLES * 8)
 
         val recorder = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,

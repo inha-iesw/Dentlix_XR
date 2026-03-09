@@ -46,7 +46,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
-    private val useWavKwsTest = true
+    private val useWavKwsTest = false
     private val kwsTestWavAssetPath = "practice/Zoom_test1_answer_3.wav"
 
     private lateinit var cameraExecutor: ExecutorService
