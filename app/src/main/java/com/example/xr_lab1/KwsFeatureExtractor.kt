@@ -5,14 +5,12 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 class KwsFeatureExtractor(
     private val sampleRate: Int = 16_000,
     private val nFft: Int = 400,
     private val hop: Int = 160,
-    private val nMels: Int = 40,
-    private val eps: Float = 1e-6f
+    private val nMels: Int = 40
 ) {
     private val fftBins = nFft / 2 + 1
     private val pad = nFft / 2
@@ -64,19 +62,19 @@ class KwsFeatureExtractor(
             }
         }
 
-        // per-clip z-norm
-        var mean = 0.0
-        for (v in out) mean += v
-        mean /= out.size.toDouble()
-        var varSum = 0.0
-        for (v in out) {
-            val d = v - mean
-            varSum += d * d
-        }
-        val std = sqrt(varSum / out.size + eps.toDouble()).toFloat()
-        for (i in out.indices) {
-            out[i] = ((out[i] - mean.toFloat()) / std)
-        }
+        // per-clip z-norm is intentionally disabled to match BN-only model training input distribution.
+//        var mean = 0.0
+//        for (v in out) mean += v
+//        mean /= out.size.toDouble()
+//        var varSum = 0.0
+//        for (v in out) {
+//            val d = v - mean
+//            varSum += d * d
+//        }
+//        val std = sqrt(varSum / out.size + eps.toDouble()).toFloat()
+//        for (i in out.indices) {
+//            out[i] = ((out[i] - mean.toFloat()) / std)
+//        }
         return out
     }
 

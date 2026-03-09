@@ -46,7 +46,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
-    private val useWavKwsTest = false
+    private val useWavKwsTest = true
     private val kwsTestWavAssetPath = "practice/Zoom_test1_answer_3.wav"
 
     private lateinit var cameraExecutor: ExecutorService
@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
         try {
             kwsEngine = KwsEngine(
                 context = this,
-                modelAssetPath = "model/kws_int8.tflite",
+                modelAssetPath = "model/kws_BN_int8.tflite",
                 triggerLabel = "zoom",
                 triggerThreshold = 0.7f,
                 testWavAssetPath = if (useWavKwsTest) kwsTestWavAssetPath else null,
