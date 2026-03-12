@@ -13,6 +13,8 @@ import java.io.BufferedInputStream
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
+import java.util.ArrayDeque
+import java.util.HashMap
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -20,14 +22,21 @@ class KwsEngine(
     private val context: Context,
     modelAssetPath: String = "model/kws_int8.tflite",
     private val triggerLabel: String = "zoom",
-    private val triggerThreshold: Float = 0.7f,
-    private val cooldownMs: Long = 1500L,
+    private val triggerThreshold: Float = 0.6f,
+    private val integrationMs: Long = 750L,
+    private val refractoryMs: Long = 1000L,
     private val testWavAssetPath: String? = null,
     private val onKeyword: (label: String, score: Float) -> Unit,
 ) {
+    private data class PosteriorSnapshot(
+        val timeMs: Long,
+        val scoresByLabel: Map<String, Float>
+    )
+
     private val featureExtractor = KwsFeatureExtractor()
     private val detector = KwsTfliteDetector(context, modelAssetPath)
     private val running = AtomicBoolean(false)
+    private val posteriorBuffer = ArrayDeque<PosteriorSnapshot>()
 
     private var worker: Thread? = null
     private var lastInferMs = 0L
@@ -38,6 +47,7 @@ class KwsEngine(
         if (running.get()) return
         lastInferMs = 0L
         lastTriggerMs = 0L
+        posteriorBuffer.clear()
         running.set(true)
         val loop = if (testWavAssetPath.isNullOrBlank()) ::loopMic else ::loopWavAssetRealtime
         worker = Thread(loop, "KwsEngine")
@@ -203,7 +213,9 @@ class KwsEngine(
         val t2 = SystemClock.elapsedRealtimeNanos()
         val result = detector.run(feature, N_MELS, featureExtractor.timeFrames)
         val t3 = SystemClock.elapsedRealtimeNanos()
-        val triggerScore = result.scoresByLabel[triggerLabel] ?: 0f
+        updatePosteriorBuffer(nowMs, result.scoresByLabel)
+        val averagedScores = computeAveragedScores()
+        val triggerScore = averagedScores[triggerLabel] ?: 0f
 
         if (nowMs - lastPerfLogMs >= 1000L) {
             val windowMs = (t1 - t0) / 1_000_000.0
@@ -220,13 +232,41 @@ class KwsEngine(
             lastPerfLogMs = nowMs
         }
 
-        if (triggerScore >= triggerThreshold && (nowMs - lastTriggerMs) >= cooldownMs) {
+        if (triggerScore >= triggerThreshold && (nowMs - lastTriggerMs) >= refractoryMs) {
             lastTriggerMs = nowMs
             onKeyword(triggerLabel, triggerScore)
             Log.i(TAG, "Triggered: $triggerLabel score=$triggerScore")
             return true
         }
         return false
+    }
+
+    private fun updatePosteriorBuffer(nowMs: Long, scoresByLabel: Map<String, Float>) {
+        posteriorBuffer.addLast(
+            PosteriorSnapshot(
+                timeMs = nowMs,
+                scoresByLabel = HashMap(scoresByLabel)
+            )
+        )
+        val minTime = nowMs - integrationMs
+        while (posteriorBuffer.isNotEmpty()) {
+            val first = posteriorBuffer.peekFirst() ?: break
+            if (first.timeMs >= minTime) break
+            posteriorBuffer.removeFirst()
+        }
+    }
+
+    private fun computeAveragedScores(): Map<String, Float> {
+        if (posteriorBuffer.isEmpty()) return emptyMap()
+
+        val sums = HashMap<String, Float>()
+        for (snapshot in posteriorBuffer) {
+            for ((label, score) in snapshot.scoresByLabel) {
+                sums[label] = (sums[label] ?: 0f) + score
+            }
+        }
+        val n = posteriorBuffer.size.toFloat()
+        return sums.mapValues { (_, sum) -> sum / n }
     }
 
     private data class WavHeader(
@@ -387,3 +427,4 @@ class KwsEngine(
         private const val N_MELS = 40
     }
 }
+
