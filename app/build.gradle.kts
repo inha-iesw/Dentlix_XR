@@ -75,10 +75,9 @@ dependencies {
     // 참고: compose.platform이 scenecore의 특정 API를 기대하므로 버전 호환성이 중요합니다
     // alpha10에서는 getSpatialCapabilities() 메서드 불일치 발생
     // alpha01 버전으로 통일 (compose.platform과 scenecore가 호환됨)
-    implementation("androidx.xr.compose:compose:1.0.0-alpha10")
-    implementation("androidx.xr.runtime:runtime:1.0.0-alpha10")
-    implementation("androidx.xr.scenecore:scenecore:1.0.0-alpha10")
-    implementation("androidx.xr.compose.material3:material3:1.0.0-alpha10")
+    implementation("androidx.xr.runtime:runtime:1.0.0-alpha09")
+    implementation("androidx.xr.scenecore:scenecore:1.0.0-alpha09")
+    implementation("androidx.xr.arcore:arcore:1.0.0-alpha09")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }

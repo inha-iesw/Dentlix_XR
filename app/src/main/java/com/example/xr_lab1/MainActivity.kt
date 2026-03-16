@@ -47,7 +47,7 @@ import java.util.concurrent.Executors
 class MainActivity : ComponentActivity() {
     private companion object {
         private val HUD_PANEL_SIZE = FloatSize2d(0.42f, 0.30f)
-        private val HUD_OFFSET = Vector3(0.24f, -0.14f, -0.46f)
+        private val HUD_OFFSET = Vector3(0.01f, 0.02f, -0.20f)
     }
 
     private val useWavKwsTest = false
