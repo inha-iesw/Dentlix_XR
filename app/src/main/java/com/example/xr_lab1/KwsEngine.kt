@@ -256,6 +256,7 @@ class KwsEngine(
         }
     }
 
+    // 스냅샷 prob 평균 구하기 
     private fun computeAveragedScores(): Map<String, Float> {
         if (posteriorBuffer.isEmpty()) return emptyMap()
 

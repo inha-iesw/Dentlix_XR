@@ -23,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.example.xr_lab1.ui.theme.XR_lab1Theme
-import androidx.xr.arcore.RenderViewpoint
 import androidx.xr.runtime.Config
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.SessionCreateApkRequired
@@ -33,7 +32,7 @@ import androidx.xr.runtime.SessionConfigureSuccess
 import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.IntSize2d
 import androidx.xr.runtime.math.Pose
-import androidx.xr.scenecore.ExperimentalSurfaceEntityPixelDimensionsApi
+import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.Space
 import androidx.xr.scenecore.scene
@@ -46,6 +45,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
+    private companion object {
+        private val HUD_PANEL_SIZE = FloatSize2d(0.42f, 0.30f)
+        private val HUD_OFFSET = Vector3(0.24f, -0.14f, -0.46f)
+    }
+
     private val useWavKwsTest = false
     private val kwsTestWavAssetPath = "practice/Zoom_test1_answer_3.wav"
 
@@ -84,7 +88,7 @@ class MainActivity : ComponentActivity() {
                 context = this,
                 modelAssetPath = "model/kws_BN_int8.tflite",
                 triggerLabel = "zoom",
-                triggerThreshold = 0.7f,
+                triggerThreshold = 0.6f,
                 testWavAssetPath = if (useWavKwsTest) kwsTestWavAssetPath else null,
             ) { label, score ->
                 runOnUiThread {
@@ -201,7 +205,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @OptIn(ExperimentalSurfaceEntityPixelDimensionsApi::class)
     private fun setupXrScene() {
         if (xrSession != null) return
 
@@ -214,7 +217,7 @@ class MainActivity : ComponentActivity() {
 
                 val configResult =
                     session.configure(
-                        session.config.copy(deviceTracking = Config.DeviceTrackingMode.LAST_KNOWN)
+                        session.config.copy(headTracking = Config.HeadTrackingMode.LAST_KNOWN)
                     )
                 if (configResult !is SessionConfigureSuccess) {
                     Log.e("XR_LAB", "Session configure failed: $configResult")
@@ -224,10 +227,12 @@ class MainActivity : ComponentActivity() {
                     SurfaceEntity.create(
                         session = session,
                         pose = Pose.Identity,
-                        shape = SurfaceEntity.Shape.Quad(FloatSize2d(0.6f, 0.5f)),
+                        shape = SurfaceEntity.Shape.Quad(HUD_PANEL_SIZE),
                         stereoMode = SurfaceEntity.StereoMode.MONO,
                     )
                 entity.parent = session.scene.activitySpace
+                @Suppress("OPT_IN_USAGE", "OPT_IN_USAGE_ERROR")
+                @SuppressLint("RestrictedApi")
                 entity.setSurfacePixelDimensions(IntSize2d(640, 480))
                 entity.edgeFeatheringParams =
                     SurfaceEntity.EdgeFeatheringParams.RectangleFeather(
@@ -256,18 +261,14 @@ class MainActivity : ComponentActivity() {
         headLockJob?.cancel()
         headLockJob =
             lifecycleScope.launch {
-                var monoViewpoint: RenderViewpoint? = null
                 while (isActive) {
-                    if (monoViewpoint == null) {
-                        monoViewpoint = RenderViewpoint.mono(session)
-                    }
-                    val perceptionPose = monoViewpoint?.state?.value?.pose
-                    if (perceptionPose != null) {
-                        val headPose =
-                            session.scene.perceptionSpace
-                                .getScenePoseFromPerceptionPose(perceptionPose)
-                                .activitySpacePose
-                        val offset = headPose.forward * 0.4f
+                    val head = session.scene.spatialUser.head
+                    if (head != null) {
+                        val headPose = head.activitySpacePose
+                        val offset =
+                            headPose.right * HUD_OFFSET.x +
+                                headPose.up * HUD_OFFSET.y +
+                                headPose.forward * -HUD_OFFSET.z
                         val targetPose = headPose.translate(offset)
                         entity.setPose(targetPose, Space.ACTIVITY)
                     }
@@ -283,7 +284,7 @@ class MainActivity : ComponentActivity() {
             overlayRenderer?.setZoomCenterX(0.4f)
             overlayRenderer?.setZoomCenterY(1.0f)
             overlayRenderer?.setInsetSize(0.38f, 0.38f)
-            overlayRenderer?.setInsetMargin(0.04f, 0.04f)
+            overlayRenderer?.setInsetMargin(0.03f, 0.04f)
         }
         overlayRenderer?.start(surface)
         Log.d("XR_LAB", "XR overlay surface ready: $surface")

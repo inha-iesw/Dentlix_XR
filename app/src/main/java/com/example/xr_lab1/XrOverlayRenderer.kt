@@ -238,12 +238,12 @@ class XrOverlayRenderer {
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
             GLES30.glBindVertexArray(0)
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
-            // val frameEndMs = SystemClock.elapsedRealtime()
-            // if (frameEndMs - lastRenderLogMs > 1000) {
-            //     val renderMs = frameEndMs - frameStartMs
-            //     Log.d("XR_LAB", "Render time: ${renderMs}ms")
-            //     lastRenderLogMs = frameEndMs
-            // }
+            val frameEndMs = SystemClock.elapsedRealtime()
+            if (frameEndMs - lastRenderLogMs > 1000) {
+                val renderMs = frameEndMs - frameStartMs
+                Log.d("XR_LAB", "Render time: ${renderMs}ms")
+                lastRenderLogMs = frameEndMs
+            }
         }
     }
 
