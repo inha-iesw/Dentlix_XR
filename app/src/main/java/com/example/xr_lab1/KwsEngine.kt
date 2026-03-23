@@ -216,34 +216,36 @@ class KwsEngine(
         val t3 = SystemClock.elapsedRealtimeNanos()
         updatePosteriorBuffer(nowMs, result.scoresByLabel)
         val averagedScores = computeAveragedScores()
-        val bestTrigger = triggerLabels
-            .map { label -> label to (averagedScores[label] ?: 0f) }
-            .maxByOrNull { it.second }
-        val triggerLabel = bestTrigger?.first
-        val triggerScore = bestTrigger?.second ?: 0f
+        val bestOverall = averagedScores.maxByOrNull { it.value }
+        val topLabel = bestOverall?.key
+        val topScore = bestOverall?.value ?: 0f
 
         if (nowMs - lastPerfLogMs >= 1000L) {
             val windowMs = (t1 - t0) / 1_000_000.0
             val featureMs = (t2 - t1) / 1_000_000.0
             val modelMs = (t3 - t2) / 1_000_000.0
             val totalMs = (t3 - t0) / 1_000_000.0
+            val scoreSummary = labels.joinToString(", ") { label ->
+                "$label=${formatScore(averagedScores[label] ?: 0f)}"
+            }
             Log.i(
                 TAG,
                 "KWS infer perf: total=${formatMillis(totalMs)}ms " +
                     "(window=${formatMillis(windowMs)}ms, " +
                     "feature=${formatMillis(featureMs)}ms, " +
-                    "model=${formatMillis(modelMs)}ms), score=$triggerScore"
+                    "model=${formatMillis(modelMs)}ms), top=$topLabel score=${formatScore(topScore)}, scores=[$scoreSummary]"
             )
             lastPerfLogMs = nowMs
         }
 
-        if (triggerLabel != null &&
-            triggerScore >= triggerThreshold &&
+        if (topLabel != null &&
+            topLabel in triggerLabels &&
+            topScore >= triggerThreshold &&
             (nowMs - lastTriggerMs) >= refractoryMs
         ) {
             lastTriggerMs = nowMs
-            onKeyword(triggerLabel, triggerScore)
-            Log.i(TAG, "Triggered: $triggerLabel score=$triggerScore")
+            onKeyword(topLabel, topScore)
+            Log.i(TAG, "Triggered: $topLabel score=$topScore")
             return true
         }
         return false
@@ -406,6 +408,10 @@ class KwsEngine(
 
     private fun formatMillis(ms: Double): String {
         return String.format(Locale.US, "%.2f", ms)
+    }
+
+    private fun formatScore(score: Float): String {
+        return String.format(Locale.US, "%.3f", score)
     }
 
     private fun snapshotWindow(ring: ShortArray, writePos: Int): ShortArray {

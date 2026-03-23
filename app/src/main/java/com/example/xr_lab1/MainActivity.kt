@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
             kwsEngine = KwsEngine(
                 context = this,
                 modelAssetPath = "model/model_kws_v2_int8.tflite",
-                labels = listOf("zoom", "reset", "unknown", "silence"),
+                labels = listOf("reset", "silence", "unknown", "zoom"),
                 triggerLabels = setOf("zoom", "reset"),
                 triggerThreshold = 0.6f,
                 testWavAssetPath = if (useWavKwsTest) kwsTestWavAssetPath else null,
