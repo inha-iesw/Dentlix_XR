@@ -14,10 +14,18 @@ class KwsTfliteDetector(
 ) {
     enum class InputLayout { NCHW, NHWC }
 
+    data class InputStats(
+        val min: Float,
+        val max: Float,
+        val mean: Float,
+        val clippedRatio: Float
+    )
+
     data class Result(
         val label: String,
         val score: Float,
-        val scoresByLabel: Map<String, Float>
+        val scoresByLabel: Map<String, Float>,
+        val inputStats: InputStats
     )
 
     private val interpreter: Interpreter
@@ -72,7 +80,7 @@ class KwsTfliteDetector(
     }
 
     fun run(featureNMelByTime: FloatArray, nMels: Int, timeFrames: Int): Result {
-        encodeInput(featureNMelByTime, nMels, timeFrames)
+        val inputStats = encodeInput(featureNMelByTime, nMels, timeFrames)
         outputBuffer.rewind()
         interpreter.run(inputBuffer, outputBuffer)
 
@@ -89,16 +97,21 @@ class KwsTfliteDetector(
             if (probs[i] > probs[best]) best = i
         }
         val scoreMap = labels.indices.associate { i -> labels[i] to probs[i] }
-        return Result(labels[best], probs[best], scoreMap)
+        return Result(labels[best], probs[best], scoreMap, inputStats)
     }
 
     fun close() {
         interpreter.close()
     }
 
-    private fun encodeInput(feature: FloatArray, nMels: Int, timeFrames: Int) {
+    private fun encodeInput(feature: FloatArray, nMels: Int, timeFrames: Int): InputStats {
         require(feature.size == nMels * timeFrames)
         inputBuffer.rewind()
+
+        var min = Float.POSITIVE_INFINITY
+        var max = Float.NEGATIVE_INFINITY
+        var sum = 0.0
+        var clipped = 0
 
         when (inputLayout) {
             InputLayout.NCHW -> {
@@ -107,13 +120,23 @@ class KwsTfliteDetector(
                 if (melFirst) {
                     for (m in 0 until nMels) {
                         for (t in 0 until timeFrames) {
-                            inputBuffer.put(floatToInt8(feature[m * timeFrames + t]))
+                            val v = feature[m * timeFrames + t]
+                            if (v < min) min = v
+                            if (v > max) max = v
+                            sum += v.toDouble()
+                            if (isClipped(v)) clipped++
+                            inputBuffer.put(floatToInt8(v))
                         }
                     }
                 } else {
                     for (t in 0 until timeFrames) {
                         for (m in 0 until nMels) {
-                            inputBuffer.put(floatToInt8(feature[m * timeFrames + t]))
+                            val v = feature[m * timeFrames + t]
+                            if (v < min) min = v
+                            if (v > max) max = v
+                            sum += v.toDouble()
+                            if (isClipped(v)) clipped++
+                            inputBuffer.put(floatToInt8(v))
                         }
                     }
                 }
@@ -124,24 +147,46 @@ class KwsTfliteDetector(
                 if (melFirst) {
                     for (m in 0 until nMels) {
                         for (t in 0 until timeFrames) {
-                            inputBuffer.put(floatToInt8(feature[m * timeFrames + t]))
+                            val v = feature[m * timeFrames + t]
+                            if (v < min) min = v
+                            if (v > max) max = v
+                            sum += v.toDouble()
+                            if (isClipped(v)) clipped++
+                            inputBuffer.put(floatToInt8(v))
                         }
                     }
                 } else {
                     for (t in 0 until timeFrames) {
                         for (m in 0 until nMels) {
-                            inputBuffer.put(floatToInt8(feature[m * timeFrames + t]))
+                            val v = feature[m * timeFrames + t]
+                            if (v < min) min = v
+                            if (v > max) max = v
+                            sum += v.toDouble()
+                            if (isClipped(v)) clipped++
+                            inputBuffer.put(floatToInt8(v))
                         }
                     }
                 }
             }
         }
         inputBuffer.rewind()
+        val count = feature.size.coerceAtLeast(1)
+        return InputStats(
+            min = min,
+            max = max,
+            mean = (sum / count.toDouble()).toFloat(),
+            clippedRatio = clipped.toFloat() / count.toFloat()
+        )
     }
 
     private fun floatToInt8(v: Float): Byte {
         val q = (v / inputScale + inputZeroPoint).toInt().coerceIn(-128, 127)
         return q.toByte()
+    }
+
+    private fun isClipped(v: Float): Boolean {
+        val q = (v / inputScale + inputZeroPoint).toInt()
+        return q < -128 || q > 127
     }
 
     private fun resolveInputLayout(shape: IntArray): InputLayout {

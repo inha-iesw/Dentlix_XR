@@ -238,6 +238,10 @@ class KwsEngine(
                     "(window=${formatMillis(windowMs)}ms, " +
                     "feature=${formatMillis(featureMs)}ms, " +
                     "model=${formatMillis(modelMs)}ms), " +
+                    "input[min=${formatScore(result.inputStats.min)}, " +
+                    "max=${formatScore(result.inputStats.max)}, " +
+                    "mean=${formatScore(result.inputStats.mean)}, " +
+                    "clip=${formatScore(result.inputStats.clippedRatio)}], " +
                     "rawTop=${rawBest?.key} rawScore=${formatScore(rawBest?.value ?: 0f)}, " +
                     "avgTop=$topLabel avgScore=${formatScore(topScore)}, " +
                     "raw=[$rawSummary], avg=[$scoreSummary]"
