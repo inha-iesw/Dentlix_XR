@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
         try {
             kwsEngine = KwsEngine(
                 context = this,
-                modelAssetPath = "model/model_kws_v2_int8.tflite",
+                modelAssetPath = "model/model_kws_v3_int8.tflite",
                 labels = listOf("reset", "silence", "unknown", "zoom"),
                 triggerLabels = setOf("zoom", "reset"),
                 triggerThreshold = 0.6f,
@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             kwsEngine = null
-            Log.e("XR_KWS", "KWS init failed. Put model at assets/model/model_kws_v2_int8.tflite", e)
+            Log.e("XR_KWS", "KWS init failed. Put model at assets/model/model_kws_v3_int8.tflite", e)
         }
 
         if (hasPermission(Manifest.permission.CAMERA)) {

@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class KwsEngine(
     private val context: Context,
-    modelAssetPath: String = "model/kws_int8.tflite",
+    modelAssetPath: String = "model/model_kws_v3_int8.tflite",
     private val labels: List<String> = listOf("zoom", "unknown", "silence"),
     private val triggerLabels: Set<String> = setOf("zoom"),
     private val triggerThreshold: Float = 0.6f,
