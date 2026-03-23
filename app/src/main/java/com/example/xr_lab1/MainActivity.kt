@@ -86,19 +86,23 @@ class MainActivity : ComponentActivity() {
         try {
             kwsEngine = KwsEngine(
                 context = this,
-                modelAssetPath = "model/kws_BN_int8.tflite",
-                triggerLabel = "zoom",
+                modelAssetPath = "model/model_kws_v2_int8.tflite",
+                labels = listOf("zoom", "reset", "unknown", "silence"),
+                triggerLabels = setOf("zoom", "reset"),
                 triggerThreshold = 0.6f,
                 testWavAssetPath = if (useWavKwsTest) kwsTestWavAssetPath else null,
             ) { label, score ->
                 runOnUiThread {
                     Log.i("XR_KWS", "Keyword detected: $label ($score)")
-                    overlayRenderer?.setZoom(6.0f)
+                    when (label) {
+                        "zoom" -> overlayRenderer?.setZoom(6.0f)
+                        "reset" -> overlayRenderer?.setZoom(1.0f)
+                    }
                 }
             }
         } catch (e: Exception) {
             kwsEngine = null
-            Log.e("XR_KWS", "KWS init failed. Put model at assets/model/kws_int8.tflite", e)
+            Log.e("XR_KWS", "KWS init failed. Put model at assets/model/model_kws_v2_int8.tflite", e)
         }
 
         if (hasPermission(Manifest.permission.CAMERA)) {

@@ -21,7 +21,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class KwsEngine(
     private val context: Context,
     modelAssetPath: String = "model/kws_int8.tflite",
-    private val triggerLabel: String = "zoom",
+    private val labels: List<String> = listOf("zoom", "unknown", "silence"),
+    private val triggerLabels: Set<String> = setOf("zoom"),
     private val triggerThreshold: Float = 0.6f,
     private val integrationMs: Long = 750L,
     private val refractoryMs: Long = 1000L,
@@ -34,7 +35,7 @@ class KwsEngine(
     )
 
     private val featureExtractor = KwsFeatureExtractor()
-    private val detector = KwsTfliteDetector(context, modelAssetPath)
+    private val detector = KwsTfliteDetector(context, modelAssetPath, labels)
     private val running = AtomicBoolean(false)
     private val posteriorBuffer = ArrayDeque<PosteriorSnapshot>()
 
@@ -215,7 +216,11 @@ class KwsEngine(
         val t3 = SystemClock.elapsedRealtimeNanos()
         updatePosteriorBuffer(nowMs, result.scoresByLabel)
         val averagedScores = computeAveragedScores()
-        val triggerScore = averagedScores[triggerLabel] ?: 0f
+        val bestTrigger = triggerLabels
+            .map { label -> label to (averagedScores[label] ?: 0f) }
+            .maxByOrNull { it.second }
+        val triggerLabel = bestTrigger?.first
+        val triggerScore = bestTrigger?.second ?: 0f
 
         if (nowMs - lastPerfLogMs >= 1000L) {
             val windowMs = (t1 - t0) / 1_000_000.0
@@ -232,7 +237,10 @@ class KwsEngine(
             lastPerfLogMs = nowMs
         }
 
-        if (triggerScore >= triggerThreshold && (nowMs - lastTriggerMs) >= refractoryMs) {
+        if (triggerLabel != null &&
+            triggerScore >= triggerThreshold &&
+            (nowMs - lastTriggerMs) >= refractoryMs
+        ) {
             lastTriggerMs = nowMs
             onKeyword(triggerLabel, triggerScore)
             Log.i(TAG, "Triggered: $triggerLabel score=$triggerScore")
