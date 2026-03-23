@@ -216,6 +216,7 @@ class KwsEngine(
         val t3 = SystemClock.elapsedRealtimeNanos()
         updatePosteriorBuffer(nowMs, result.scoresByLabel)
         val averagedScores = computeAveragedScores()
+        val rawBest = result.scoresByLabel.maxByOrNull { it.value }
         val bestOverall = averagedScores.maxByOrNull { it.value }
         val topLabel = bestOverall?.key
         val topScore = bestOverall?.value ?: 0f
@@ -225,6 +226,9 @@ class KwsEngine(
             val featureMs = (t2 - t1) / 1_000_000.0
             val modelMs = (t3 - t2) / 1_000_000.0
             val totalMs = (t3 - t0) / 1_000_000.0
+            val rawSummary = labels.joinToString(", ") { label ->
+                "$label=${formatScore(result.scoresByLabel[label] ?: 0f)}"
+            }
             val scoreSummary = labels.joinToString(", ") { label ->
                 "$label=${formatScore(averagedScores[label] ?: 0f)}"
             }
@@ -233,7 +237,10 @@ class KwsEngine(
                 "KWS infer perf: total=${formatMillis(totalMs)}ms " +
                     "(window=${formatMillis(windowMs)}ms, " +
                     "feature=${formatMillis(featureMs)}ms, " +
-                    "model=${formatMillis(modelMs)}ms), top=$topLabel score=${formatScore(topScore)}, scores=[$scoreSummary]"
+                    "model=${formatMillis(modelMs)}ms), " +
+                    "rawTop=${rawBest?.key} rawScore=${formatScore(rawBest?.value ?: 0f)}, " +
+                    "avgTop=$topLabel avgScore=${formatScore(topScore)}, " +
+                    "raw=[$rawSummary], avg=[$scoreSummary]"
             )
             lastPerfLogMs = nowMs
         }
