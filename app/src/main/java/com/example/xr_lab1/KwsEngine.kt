@@ -13,7 +13,6 @@ import java.io.BufferedInputStream
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
-import java.util.ArrayDeque
 import java.util.HashMap
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -23,21 +22,16 @@ class KwsEngine(
     modelAssetPath: String = "model/model_kws_v3_int8.tflite",
     private val labels: List<String> = listOf("zoom", "unknown", "silence"),
     private val triggerLabels: Set<String> = setOf("zoom"),
-    private val triggerThreshold: Float = 0.6f,
-    private val integrationMs: Long = 750L,
+    private val triggerThreshold: Float = 0.4f,
+    private val emaAlpha: Float = 0.35f,
     private val refractoryMs: Long = 1000L,
     private val testWavAssetPath: String? = null,
     private val onKeyword: (label: String, score: Float) -> Unit,
 ) {
-    private data class PosteriorSnapshot(
-        val timeMs: Long,
-        val scoresByLabel: Map<String, Float>
-    )
-
     private val featureExtractor = KwsFeatureExtractor()
     private val detector = KwsTfliteDetector(context, modelAssetPath, labels)
     private val running = AtomicBoolean(false)
-    private val posteriorBuffer = ArrayDeque<PosteriorSnapshot>()
+    private val emaScores = HashMap<String, Float>()
 
     private var worker: Thread? = null
     private var lastInferMs = 0L
@@ -48,7 +42,7 @@ class KwsEngine(
         if (running.get()) return
         lastInferMs = 0L
         lastTriggerMs = 0L
-        posteriorBuffer.clear()
+        emaScores.clear()
         running.set(true)
         val loop = if (testWavAssetPath.isNullOrBlank()) ::loopMic else ::loopWavAssetRealtime
         worker = Thread(loop, "KwsEngine")
@@ -214,12 +208,13 @@ class KwsEngine(
         val t2 = SystemClock.elapsedRealtimeNanos()
         val result = detector.run(feature, N_MELS, featureExtractor.timeFrames)
         val t3 = SystemClock.elapsedRealtimeNanos()
-        updatePosteriorBuffer(nowMs, result.scoresByLabel)
-        val averagedScores = computeAveragedScores()
+        val smoothedScores = updateEmaScores(result.scoresByLabel)
         val rawBest = result.scoresByLabel.maxByOrNull { it.value }
-        val bestOverall = averagedScores.maxByOrNull { it.value }
-        val topLabel = bestOverall?.key
-        val topScore = bestOverall?.value ?: 0f
+        val bestTrigger = triggerLabels
+            .map { label -> label to (smoothedScores[label] ?: 0f) }
+            .maxByOrNull { it.second }
+        val topTriggerLabel = bestTrigger?.first
+        val topTriggerScore = bestTrigger?.second ?: 0f
 
         if (nowMs - lastPerfLogMs >= 1000L) {
             val windowMs = (t1 - t0) / 1_000_000.0
@@ -230,7 +225,7 @@ class KwsEngine(
                 "$label=${formatScore(result.scoresByLabel[label] ?: 0f)}"
             }
             val scoreSummary = labels.joinToString(", ") { label ->
-                "$label=${formatScore(averagedScores[label] ?: 0f)}"
+                "$label=${formatScore(smoothedScores[label] ?: 0f)}"
             }
             Log.i(
                 TAG,
@@ -243,52 +238,34 @@ class KwsEngine(
                     "mean=${formatScore(result.inputStats.mean)}, " +
                     "clip=${formatScore(result.inputStats.clippedRatio)}], " +
                     "rawTop=${rawBest?.key} rawScore=${formatScore(rawBest?.value ?: 0f)}, " +
-                    "avgTop=$topLabel avgScore=${formatScore(topScore)}, " +
-                    "raw=[$rawSummary], avg=[$scoreSummary]"
+                    "triggerTop=$topTriggerLabel triggerScore=${formatScore(topTriggerScore)}, " +
+                    "raw=[$rawSummary], ema=[$scoreSummary]"
             )
             lastPerfLogMs = nowMs
         }
 
-        if (topLabel != null &&
-            topLabel in triggerLabels &&
-            topScore >= triggerThreshold &&
+        if (topTriggerLabel != null &&
+            topTriggerScore >= triggerThreshold &&
             (nowMs - lastTriggerMs) >= refractoryMs
         ) {
             lastTriggerMs = nowMs
-            onKeyword(topLabel, topScore)
-            Log.i(TAG, "Triggered: $topLabel score=$topScore")
+            onKeyword(topTriggerLabel, topTriggerScore)
+            Log.i(TAG, "Triggered: $topTriggerLabel score=$topTriggerScore")
             return true
         }
         return false
     }
 
-    private fun updatePosteriorBuffer(nowMs: Long, scoresByLabel: Map<String, Float>) {
-        posteriorBuffer.addLast(
-            PosteriorSnapshot(
-                timeMs = nowMs,
-                scoresByLabel = HashMap(scoresByLabel)
-            )
-        )
-        val minTime = nowMs - integrationMs
-        while (posteriorBuffer.isNotEmpty()) {
-            val first = posteriorBuffer.peekFirst() ?: break
-            if (first.timeMs >= minTime) break
-            posteriorBuffer.removeFirst()
-        }
-    }
-
-    // 스냅샷 prob 평균 구하기 
-    private fun computeAveragedScores(): Map<String, Float> {
-        if (posteriorBuffer.isEmpty()) return emptyMap()
-
-        val sums = HashMap<String, Float>()
-        for (snapshot in posteriorBuffer) {
-            for ((label, score) in snapshot.scoresByLabel) {
-                sums[label] = (sums[label] ?: 0f) + score
+    private fun updateEmaScores(scoresByLabel: Map<String, Float>): Map<String, Float> {
+        for ((label, score) in scoresByLabel) {
+            val prev = emaScores[label]
+            emaScores[label] = if (prev == null) {
+                score
+            } else {
+                (emaAlpha * score) + ((1f - emaAlpha) * prev)
             }
         }
-        val n = posteriorBuffer.size.toFloat()
-        return sums.mapValues { (_, sum) -> sum / n }
+        return HashMap(emaScores)
     }
 
     private data class WavHeader(
@@ -453,4 +430,3 @@ class KwsEngine(
         private const val N_MELS = 40
     }
 }
-

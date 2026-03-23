@@ -89,7 +89,8 @@ class MainActivity : ComponentActivity() {
                 modelAssetPath = "model/model_kws_v3_int8.tflite",
                 labels = listOf("reset", "silence", "unknown", "zoom"),
                 triggerLabels = setOf("zoom", "reset"),
-                triggerThreshold = 0.6f,
+                triggerThreshold = 0.4f,
+                emaAlpha = 0.35f,
                 testWavAssetPath = if (useWavKwsTest) kwsTestWavAssetPath else null,
             ) { label, score ->
                 runOnUiThread {
@@ -284,7 +285,7 @@ class MainActivity : ComponentActivity() {
     private fun startXrOverlayRenderer(surface: AndroidSurface) {
         if (overlayRenderer == null) {
             overlayRenderer = XrOverlayRenderer()
-            overlayRenderer?.setZoom(4.0f)
+            overlayRenderer?.setZoom(1.0f)
             overlayRenderer?.setZoomCenterX(0.4f)
             overlayRenderer?.setZoomCenterY(1.0f)
             overlayRenderer?.setInsetSize(0.38f, 0.38f)
